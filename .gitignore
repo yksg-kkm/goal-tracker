@@ -1,0 +1,19 @@
+# 依存関係・ビルド成果物
+node_modules/
+dist/
+*.local
+
+# ログ
+*.log
+npm-debug.log*
+
+# エディタ
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# ===== S2: 個人の進捗データをリポジトリに含めない =====
+*.export.json
+data/
+*.backup.json

@@ -1,0 +1,59 @@
+# main への push で GitHub Pages に自動デプロイするワークフロー
+name: GitHub Pages へデプロイ
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # 手動実行も可能にする
+
+# GITHUB_TOKEN の権限は必要最小限に絞る
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時に複数のデプロイが走らないようにする
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Node.js セットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 依存関係のインストール(lockfile固定)
+        run: npm ci
+
+      - name: 監査(既知の脆弱性チェック)
+        run: npm audit --audit-level=high
+
+      - name: ビルド(型チェック込み)
+        run: npm run build
+
+      - name: Pages 設定
+        uses: actions/configure-pages@v5
+
+      - name: 成果物のアップロード
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: デプロイ
+        id: deployment
+        uses: actions/deploy-pages@v4

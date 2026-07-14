@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ダークテーマ基調(フォーム部品などブラウザUIもダークに) */
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #020617; /* slate-950 */
+  color: #f1f5f9; /* slate-100 */
+  -webkit-tap-highlight-color: transparent;
+  /* iOS ノッチ・ホームバーのセーフエリアを確保 */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
