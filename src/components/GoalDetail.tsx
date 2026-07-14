@@ -1,6 +1,7 @@
 // 目標詳細画面: 進捗・グラフ・ログ入力・マイルストーン一覧・ログ履歴
 import type { Goal, LogEntry, Milestone } from "../types";
 import { goalProgress, todayStr } from "../util";
+import { fmtDuration } from "../timer";
 import { TYPE_LABEL } from "./GoalCard";
 import LogForm from "./LogForm";
 import ProgressBar from "./ProgressBar";
@@ -8,12 +9,20 @@ import ProgressChart from "./ProgressChart";
 
 interface Props {
   goal: Goal;
+  /** この目標に紐付いたタイマー記録の累計作業秒数 */
+  timerSeconds: number;
   onBack: () => void;
   onUpdate: (updater: (g: Goal) => Goal) => void;
   onDelete: () => void;
 }
 
-export default function GoalDetail({ goal, onBack, onUpdate, onDelete }: Props) {
+export default function GoalDetail({
+  goal,
+  timerSeconds,
+  onBack,
+  onUpdate,
+  onDelete,
+}: Props) {
   const doneCount = goal.milestones.filter((m) => m.done).length;
 
   function toggleMilestone(id: string) {
@@ -70,6 +79,9 @@ export default function GoalDetail({ goal, onBack, onUpdate, onDelete }: Props) 
         <ProgressBar percent={goalProgress(goal)} />
         <p className="mt-1 text-xs text-slate-400">
           マイルストーン {doneCount} / {goal.milestones.length} 達成
+          {timerSeconds > 0 && (
+            <span className="ml-2">⏱ 累計作業時間 {fmtDuration(timerSeconds)}</span>
+          )}
         </p>
       </header>
 

@@ -47,10 +47,42 @@ export interface Goal {
   logs: LogEntry[];
 }
 
+// ===== タイマー(ポモドーロ / シンプル) =====
+
+/** タイマーの種類 */
+export type TimerMode = "pomodoro" | "simple";
+
+/** タイマー実行1回ごとの記録(T3) */
+export interface TimerLog {
+  id: string;
+  /** 開始日時(ISO 8601) */
+  startedAt: string;
+  mode: TimerMode;
+  /** 設定時間(分)。ポモドーロは作業時間の合計(作業分 × セット数) */
+  plannedMinutes: number;
+  /** 実績時間(秒)。ポモドーロは作業時間のみ(休憩を含まない)、超過継続型は超過分込みの合計 */
+  actualSeconds: number;
+  /** 完走したか(false = 途中停止) */
+  completed: boolean;
+  /** メモ(何をしたか・省略可) */
+  note: string;
+  /** 紐付けた目標のID(任意) */
+  goalId?: string;
+  /** ポモドーロの内訳(表示用) */
+  workMinutes?: number;
+  breakMinutes?: number;
+  totalSets?: number;
+  /** 完了したセット数(途中停止時の参考) */
+  completedSets?: number;
+}
+
 /** エクスポートファイルの形式(端末間データ移行用) */
 export interface ExportFile {
   app: "GoalTracker";
-  version: 1;
+  /** 1: 目標のみ / 2: タイマー記録(timerLogs)を含む */
+  version: 1 | 2;
   exportedAt: string;
   goals: Goal[];
+  /** version 2 以降 */
+  timerLogs?: TimerLog[];
 }
