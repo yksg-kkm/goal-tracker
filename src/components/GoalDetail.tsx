@@ -1,9 +1,11 @@
 // 目標詳細画面: 進捗・グラフ・ログ入力・マイルストーン一覧・ログ履歴
+import { useState } from "react";
 import type { Goal, LogEntry, Milestone } from "../types";
-import { goalProgress, todayStr } from "../util";
+import { goalProgress, nowStr } from "../util";
 import { fmtDuration } from "../timer";
 import { TYPE_LABEL } from "./GoalCard";
 import LogForm from "./LogForm";
+import MilestoneEditor, { targetText } from "./MilestoneEditor";
 import ProgressBar from "./ProgressBar";
 import ProgressChart from "./ProgressChart";
 
@@ -24,13 +26,15 @@ export default function GoalDetail({
   onDelete,
 }: Props) {
   const doneCount = goal.milestones.filter((m) => m.done).length;
+  // マイルストーン編集モード(M1: 追加・編集・削除・並べ替え)
+  const [msEditing, setMsEditing] = useState(false);
 
   function toggleMilestone(id: string) {
     onUpdate((g) => ({
       ...g,
       milestones: g.milestones.map((m) =>
         m.id === id
-          ? { ...m, done: !m.done, doneDate: m.done ? undefined : todayStr() }
+          ? { ...m, done: !m.done, doneDate: m.done ? undefined : nowStr() }
           : m,
       ),
     }));
@@ -76,13 +80,34 @@ export default function GoalDetail({
           )}
         </div>
         <h1 className="mb-3 text-lg font-bold leading-snug">{goal.title}</h1>
-        <ProgressBar percent={goalProgress(goal)} />
-        <p className="mt-1 text-xs text-slate-400">
-          マイルストーン {doneCount} / {goal.milestones.length} 達成
-          {timerSeconds > 0 && (
-            <span className="ml-2">⏱ 累計作業時間 {fmtDuration(timerSeconds)}</span>
-          )}
-        </p>
+        {/* M3: マイルストーンが0個の目標は進捗バーを出さず、追加ボタンを表示する */}
+        {goal.milestones.length > 0 ? (
+          <>
+            <ProgressBar percent={goalProgress(goal)} />
+            <p className="mt-1 text-xs text-slate-400">
+              マイルストーン {doneCount} / {goal.milestones.length} 達成
+              {timerSeconds > 0 && (
+                <span className="ml-2">
+                  ⏱ 累計作業時間 {fmtDuration(timerSeconds)}
+                </span>
+              )}
+            </p>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => setMsEditing(true)}
+              className="w-full rounded-lg border border-dashed border-slate-600 py-2 text-sm text-slate-300 active:bg-slate-800"
+            >
+              + マイルストーンを追加
+            </button>
+            {timerSeconds > 0 && (
+              <p className="mt-1 text-xs text-slate-400">
+                ⏱ 累計作業時間 {fmtDuration(timerSeconds)}
+              </p>
+            )}
+          </>
+        )}
       </header>
 
       <ProgressChart goal={goal} />
@@ -90,46 +115,81 @@ export default function GoalDetail({
       <LogForm goal={goal} onAdd={addLog} />
 
       <section className="rounded-xl bg-slate-800 p-4">
-        <h3 className="mb-2 text-sm font-medium text-slate-300">
-          マイルストーン
-        </h3>
-        <div className="space-y-3">
-          {groups.map(([section, milestones]) => (
-            <div key={section || "_default"}>
-              {section && (
-                <h4 className="mb-1 text-xs font-semibold text-slate-400">
-                  {section}
-                </h4>
-              )}
-              <ul className="space-y-1">
-                {milestones.map((m) => (
-                  <li key={m.id}>
-                    <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-sm active:bg-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={m.done}
-                        onChange={() => toggleMilestone(m.id)}
-                        className="h-5 w-5 shrink-0 accent-[#3987e5]"
-                      />
-                      <span
-                        className={
-                          m.done ? "text-slate-500 line-through" : "text-slate-200"
-                        }
-                      >
-                        {m.title}
-                      </span>
-                      {m.done && m.doneDate && (
-                        <span className="ml-auto shrink-0 text-xs text-slate-500">
-                          {m.doneDate}
-                        </span>
-                      )}
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-sm font-medium text-slate-300">マイルストーン</h3>
+          <button
+            onClick={() => setMsEditing((v) => !v)}
+            className={`rounded-lg border px-3 py-1 text-xs font-semibold ${
+              msEditing
+                ? "border-[#3987e5] text-[#3987e5]"
+                : "border-slate-600 text-slate-300"
+            } active:bg-slate-700`}
+          >
+            {msEditing ? "編集を終了" : "✎ 編集"}
+          </button>
         </div>
+
+        {msEditing ? (
+          /* 編集モード: 追加・編集・削除・上下並べ替え(M1) */
+          <MilestoneEditor
+            milestones={goal.milestones}
+            onChange={(ms) => onUpdate((g) => ({ ...g, milestones: ms }))}
+          />
+        ) : goal.milestones.length === 0 ? (
+          <p className="text-sm text-slate-400">
+            まだマイルストーンがありません。「✎ 編集」から追加できます。
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {groups.map(([section, milestones]) => (
+              <div key={section || "_default"}>
+                {section && (
+                  <h4 className="mb-1 text-xs font-semibold text-slate-400">
+                    {section}
+                  </h4>
+                )}
+                <ul className="space-y-1">
+                  {milestones.map((m) => (
+                    <li key={m.id}>
+                      <label className="flex items-center gap-2 rounded-lg px-1 py-1 text-sm active:bg-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={m.done}
+                          onChange={() => toggleMilestone(m.id)}
+                          className="h-5 w-5 shrink-0 accent-[#3987e5]"
+                        />
+                        <span
+                          className={
+                            m.done
+                              ? "text-slate-500 line-through"
+                              : "text-slate-200"
+                          }
+                        >
+                          {m.title}
+                        </span>
+                        {m.done && m.doneDate && (
+                          <span className="ml-auto shrink-0 text-xs text-slate-500">
+                            {m.doneDate.slice(0, 10)}
+                          </span>
+                        )}
+                      </label>
+                      {(m.note !== undefined || targetText(m) !== null) && (
+                        <p className="ml-8 text-xs text-slate-500">
+                          {targetText(m) !== null && (
+                            <span className="mr-1.5 rounded bg-slate-700 px-1 text-slate-400">
+                              🎯 {targetText(m)}
+                            </span>
+                          )}
+                          {m.note}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="rounded-xl bg-slate-800 p-4">

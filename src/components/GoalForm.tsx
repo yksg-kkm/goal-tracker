@@ -1,17 +1,42 @@
-// 目標追加画面: type を選ぶとテンプレートが適用される
+// 目標追加画面: type 選択でテンプレートを「初期案」として提案する(M2)
+// マイルストーンは「このまま使う / 編集して使う / 白紙から作る」から選べる
 import { useState, type FormEvent } from "react";
-import type { GoalType } from "../types";
+import type { GoalType, Milestone } from "../types";
 import {
+  buildMusicMilestones,
+  buildSimpleMilestones,
   EXAM_TEMPLATE,
   HABIT_TEMPLATE,
   musicStages,
   type NewGoalInput,
 } from "../templates";
+import MilestoneEditor from "./MilestoneEditor";
 
 interface Props {
   onCreate: (input: NewGoalInput) => void;
   onBack: () => void;
 }
+
+/** マイルストーンの初期化方法 */
+type MsChoice = "template" | "edit" | "blank";
+
+const MS_CHOICES: { value: MsChoice; label: string; desc: string }[] = [
+  {
+    value: "template",
+    label: "このまま使う",
+    desc: "テンプレートを適用(作成後も自由に編集できます)",
+  },
+  {
+    value: "edit",
+    label: "編集して使う",
+    desc: "テンプレートを下書きにして、今ここで編集する",
+  },
+  {
+    value: "blank",
+    label: "白紙から作る",
+    desc: "マイルストーンなしで作成し、自由に追加する",
+  },
+];
 
 const TYPE_OPTIONS: { value: GoalType; label: string; desc: string }[] = [
   {
@@ -40,8 +65,42 @@ export default function GoalForm({ onCreate, onBack }: Props) {
   const [sectionsText, setSectionsText] = useState("A,A',B,A'',コーダ");
   const [targetTempo, setTargetTempo] = useState("120");
   const [targetDate, setTargetDate] = useState("");
+  const [msChoice, setMsChoice] = useState<MsChoice>("template");
+  // 「編集して使う / 白紙から作る」の下書きマイルストーン
+  const [drafts, setDrafts] = useState<Milestone[]>([]);
 
-  // 選択中の type で適用されるテンプレートのプレビュー
+  function parseSections(): string[] {
+    return sectionsText
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  /** 現在の入力値からテンプレートのマイルストーンを生成する */
+  function buildFromTemplate(t: GoalType): Milestone[] {
+    if (t === "music") {
+      const sections = parseSections();
+      return buildMusicMilestones(
+        sections.length > 0 ? sections : ["A", "B"],
+        Number(targetTempo) || 120,
+      );
+    }
+    return buildSimpleMilestones(t === "exam" ? EXAM_TEMPLATE : HABIT_TEMPLATE);
+  }
+
+  function changeType(t: GoalType) {
+    setType(t);
+    // 「編集して使う」の下書きはタイプのテンプレートに合わせて作り直す
+    if (msChoice === "edit") setDrafts(buildFromTemplate(t));
+  }
+
+  function changeMsChoice(c: MsChoice) {
+    setMsChoice(c);
+    if (c === "edit") setDrafts(buildFromTemplate(type));
+    if (c === "blank") setDrafts([]);
+  }
+
+  // 「このまま使う」で適用されるテンプレートのプレビュー(初期案)
   const preview: string[] =
     type === "music"
       ? musicStages(Number(targetTempo) || 120)
@@ -55,12 +114,11 @@ export default function GoalForm({ onCreate, onBack }: Props) {
     onCreate({
       type,
       title: title.trim(),
-      sections: sectionsText
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
+      sections: parseSections(),
       targetTempo: Number(targetTempo) || 120,
       targetDate: targetDate || undefined,
+      // M2: 「このまま使う」以外は下書き(空配列含む)をそのまま採用する
+      milestones: msChoice === "template" ? undefined : drafts,
     });
   }
 
@@ -92,7 +150,7 @@ export default function GoalForm({ onCreate, onBack }: Props) {
                   name="goal-type"
                   value={opt.value}
                   checked={type === opt.value}
-                  onChange={() => setType(opt.value)}
+                  onChange={() => changeType(opt.value)}
                   className="sr-only"
                 />
                 <span className="block text-sm font-semibold">{opt.label}</span>
@@ -153,17 +211,75 @@ export default function GoalForm({ onCreate, onBack }: Props) {
           </label>
         )}
 
-        <div className="rounded-xl bg-slate-900 p-3">
-          <h3 className="mb-1 text-xs font-semibold text-slate-400">
-            適用されるテンプレート
-            {type === "music" && "(各区間に以下の4段階)"}
-          </h3>
-          <ol className="list-inside list-decimal space-y-0.5 text-xs text-slate-300">
-            {preview.map((t) => (
-              <li key={t}>{t}</li>
+        {/* M2: テンプレートは初期案。使い方を3択から選ぶ */}
+        <fieldset>
+          <legend className="mb-2 text-xs text-slate-400">
+            マイルストーンの作り方
+          </legend>
+          <div className="space-y-1.5">
+            {MS_CHOICES.map((c) => (
+              <label
+                key={c.value}
+                className={`flex items-start gap-2 rounded-lg border p-2.5 text-sm ${
+                  msChoice === c.value
+                    ? "border-[#3987e5] bg-slate-800"
+                    : "border-slate-700 bg-slate-900"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="ms-choice"
+                  checked={msChoice === c.value}
+                  onChange={() => changeMsChoice(c.value)}
+                  className="mt-0.5 accent-[#3987e5]"
+                />
+                <span>
+                  <span className="font-semibold text-slate-200">{c.label}</span>
+                  <span className="block text-xs text-slate-400">{c.desc}</span>
+                </span>
+              </label>
             ))}
-          </ol>
-        </div>
+          </div>
+        </fieldset>
+
+        {msChoice === "template" && (
+          <div className="rounded-xl bg-slate-900 p-3">
+            <h3 className="mb-1 text-xs font-semibold text-slate-400">
+              テンプレート(初期案)
+              {type === "music" && "(各区間に以下の4段階)"}
+            </h3>
+            <ol className="list-inside list-decimal space-y-0.5 text-xs text-slate-300">
+              {preview.map((t) => (
+                <li key={t}>{t}</li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {msChoice !== "template" && (
+          <div className="rounded-xl bg-slate-900 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-slate-400">
+                マイルストーン({drafts.length}件)
+              </h3>
+              {msChoice === "edit" && (
+                <button
+                  type="button"
+                  onClick={() => setDrafts(buildFromTemplate(type))}
+                  className="rounded border border-slate-600 px-2 py-1 text-xs text-slate-300 active:bg-slate-700"
+                >
+                  テンプレートから作り直す
+                </button>
+              )}
+            </div>
+            {/* key で選択切替時に編集状態をリセットする */}
+            <MilestoneEditor
+              key={msChoice}
+              milestones={drafts}
+              onChange={setDrafts}
+            />
+          </div>
+        )}
 
         <button
           type="submit"

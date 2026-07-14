@@ -17,17 +17,23 @@ export interface LogEntry {
   note: string;
 }
 
-/** マイルストーン(目標を構成する中間ステップ) */
+/** マイルストーン(目標を構成する中間ステップ。追加・編集・削除・並べ替え自由) */
 export interface Milestone {
   id: string;
   title: string;
-  /** 所属する区間(music用。例: "A", "コーダ") */
+  /** 所属する区間・カテゴリ(任意。例: "A", "コーダ") */
   section?: string;
   done: boolean;
-  /** 達成日(YYYY-MM-DD) */
+  /** 達成日時(旧データは "YYYY-MM-DD"、新規は "YYYY-MM-DD HH:MM"。両形式とも有効) */
   doneDate?: string;
   /** 表示順 */
   order: number;
+  /** 補足メモ(任意) */
+  note?: string;
+  /** 達成条件の項目名(任意。例: "テンポ", "正答率%") */
+  targetLabel?: string;
+  /** 達成条件の数値(任意。例: 132, 80) */
+  targetValue?: number;
 }
 
 /** 目標 */

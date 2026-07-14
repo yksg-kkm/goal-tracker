@@ -161,7 +161,13 @@ function isMilestone(v: unknown): v is Milestone {
     typeof m.id === "string" &&
     typeof m.title === "string" &&
     typeof m.done === "boolean" &&
-    typeof m.order === "number"
+    typeof m.order === "number" &&
+    // 任意フィールド(旧形式には存在しない = undefined でも有効。M4)
+    (m.section === undefined || typeof m.section === "string") &&
+    (m.doneDate === undefined || typeof m.doneDate === "string") &&
+    (m.note === undefined || typeof m.note === "string") &&
+    (m.targetLabel === undefined || typeof m.targetLabel === "string") &&
+    (m.targetValue === undefined || typeof m.targetValue === "number")
   );
 }
 

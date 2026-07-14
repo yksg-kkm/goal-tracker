@@ -51,7 +51,7 @@ export const HABIT_TEMPLATE: string[] = [
   "3か月継続(習慣化)",
 ];
 
-function buildSimpleMilestones(titles: string[]): Milestone[] {
+export function buildSimpleMilestones(titles: string[]): Milestone[] {
   return titles.map((title, i) => ({
     id: uid(),
     title,
@@ -70,9 +70,14 @@ export interface NewGoalInput {
   targetTempo?: number;
   /** exam: 試験日など */
   targetDate?: string;
+  /**
+   * M2: 指定時はテンプレートの代わりにこのマイルストーンを使う
+   * (「編集して使う」「白紙から作る」用。空配列も有効)
+   */
+  milestones?: Milestone[];
 }
 
-/** type に応じたテンプレートを適用して新しい目標を作る */
+/** 新しい目標を作る。milestones 未指定なら type のテンプレートを初期案として適用する */
 export function createGoal(input: NewGoalInput): Goal {
   const base = {
     id: uid(),
@@ -89,7 +94,7 @@ export function createGoal(input: NewGoalInput): Goal {
       type: "music",
       sections,
       targetTempo: tempo,
-      milestones: buildMusicMilestones(sections, tempo),
+      milestones: input.milestones ?? buildMusicMilestones(sections, tempo),
     };
   }
   if (input.type === "exam") {
@@ -97,12 +102,12 @@ export function createGoal(input: NewGoalInput): Goal {
       ...base,
       type: "exam",
       targetDate: input.targetDate || undefined,
-      milestones: buildSimpleMilestones(EXAM_TEMPLATE),
+      milestones: input.milestones ?? buildSimpleMilestones(EXAM_TEMPLATE),
     };
   }
   return {
     ...base,
     type: "habit",
-    milestones: buildSimpleMilestones(HABIT_TEMPLATE),
+    milestones: input.milestones ?? buildSimpleMilestones(HABIT_TEMPLATE),
   };
 }

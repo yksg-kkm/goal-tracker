@@ -33,11 +33,14 @@ export default function GoalCard({ goal, onOpen }: Props) {
         )}
       </div>
       <h2 className="mb-2 font-semibold leading-snug">{goal.title}</h2>
-      <ProgressBar percent={goalProgress(goal)} />
+      {/* M3: マイルストーンが0個の目標は進捗バーを表示しない */}
+      {goal.milestones.length > 0 && <ProgressBar percent={goalProgress(goal)} />}
       <p className="mt-2 truncate text-sm text-slate-400">
-        {next
-          ? `次: ${next.section ? `${next.section} — ` : ""}${next.title}`
-          : "🎉 全マイルストーン達成!"}
+        {goal.milestones.length === 0
+          ? "マイルストーン未設定 — タップして追加"
+          : next
+            ? `次: ${next.section ? `${next.section} — ` : ""}${next.title}`
+            : "🎉 全マイルストーン達成!"}
       </p>
     </button>
   );

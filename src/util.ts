@@ -14,6 +14,14 @@ export function todayStr(): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+/** 現在日時を YYYY-MM-DD HH:MM(ローカル時刻基準)で返す(マイルストーン達成日時の記録用) */
+export function nowStr(): string {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${todayStr()} ${hh}:${mm}`;
+}
+
 /** YYYY-MM-DD → 「M/D」表示(グラフ軸用) */
 export function formatDateShort(date: string): string {
   const parts = date.split("-");
