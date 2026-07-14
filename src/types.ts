@@ -4,13 +4,28 @@
 /** 目標の種類 */
 export type GoalType = "music" | "exam" | "habit";
 
+/** 練習区間(music用。操作者が自由に定義・編集できる。P1) */
+export interface Section {
+  id: string;
+  /** 区間名(必須。例: "A", "1〜2小節", "16小節目の装飾音") */
+  name: string;
+  /** 小節範囲(任意・自由書式。例: "1〜8") */
+  bars?: string;
+  /** メモ(任意) */
+  note?: string;
+  /** 表示順 */
+  order: number;
+}
+
 /** 日々の記録(ログ) */
 export interface LogEntry {
   id: string;
   /** 日付(YYYY-MM-DD) */
   date: string;
-  /** 練習区間(music用) */
+  /** 練習区間(旧形式・単一。読み込み時に sections へ変換される) */
   section?: string;
+  /** 練習区間(music用・複数選択可。P4) */
+  sections?: string[];
   /** 達成テンポ ♩=n(music用) */
   tempo?: number;
   /** メモ */
@@ -45,10 +60,15 @@ export interface Goal {
   createdAt: string;
   /** 目標日(試験日など・任意) */
   targetDate?: string;
-  /** 練習区間の一覧(music用) */
-  sections?: string[];
+  /** 練習区間の一覧(music用。旧形式 string[] は読み込み時に自動変換される) */
+  sections?: Section[];
   /** 目標テンポ(music用) */
   targetTempo?: number;
+  /**
+   * テンポ段階のテンプレート(music用・目標ごとに編集可。P3)。
+   * 新しい区間を追加したときのマイルストーン自動生成に使う
+   */
+  stages?: string[];
   milestones: Milestone[];
   logs: LogEntry[];
 }
@@ -74,6 +94,8 @@ export interface TimerLog {
   note: string;
   /** 紐付けた目標のID(任意) */
   goalId?: string;
+  /** 紐付けた練習区間名(music用・任意。P4) */
+  section?: string;
   /** ポモドーロの内訳(表示用) */
   workMinutes?: number;
   breakMinutes?: number;
@@ -85,8 +107,12 @@ export interface TimerLog {
 /** エクスポートファイルの形式(端末間データ移行用) */
 export interface ExportFile {
   app: "GoalTracker";
-  /** 1: 目標のみ / 2: タイマー記録(timerLogs)を含む */
-  version: 1 | 2;
+  /**
+   * 1: 目標のみ / 2: タイマー記録(timerLogs)を含む /
+   * 3: 区間が Section オブジェクト・ログ区間が複数選択
+   * (旧バージョンのファイルも読み込み時に自動変換される)
+   */
+  version: 1 | 2 | 3;
   exportedAt: string;
   goals: Goal[];
   /** version 2 以降 */

@@ -1,6 +1,14 @@
-// ===== 目標タイプ別のテンプレート =====
-import type { Goal, GoalType, LogEntry, Milestone } from "./types";
+// ===== 目標タイプ別のテンプレート(初期案。適用後は自由に編集できる) =====
+import type { Goal, GoalType, LogEntry, Milestone, Section } from "./types";
 import { todayStr, uid } from "./util";
+
+/** music: 練習区間テンプレートの初期案(P2) */
+export const SECTION_TEMPLATE: string[] = ["A", "A'", "B", "A''", "コーダ"];
+
+/** 区間名の一覧から Section エンティティを生成する */
+export function buildSections(names: string[]): Section[] {
+  return names.map((name, i) => ({ id: uid(), name, order: i }));
+}
 
 /** music: 区間ごとの練習段階(譜読み → 段階テンポ → 目標テンポ) */
 export function musicStages(targetTempo: number): string[] {
@@ -12,14 +20,14 @@ export function musicStages(targetTempo: number): string[] {
   ];
 }
 
-/** music: 区間 × 練習段階のマイルストーン一覧を生成する */
+/** music: 区間 × テンポ段階のマイルストーン一覧を生成する */
 export function buildMusicMilestones(
-  sections: string[],
-  targetTempo: number,
+  sectionNames: string[],
+  stages: string[],
 ): Milestone[] {
   const list: Milestone[] = [];
-  for (const section of sections) {
-    for (const stage of musicStages(targetTempo)) {
+  for (const section of sectionNames) {
+    for (const stage of stages) {
       list.push({
         id: uid(),
         title: stage,
@@ -64,8 +72,8 @@ export function buildSimpleMilestones(titles: string[]): Milestone[] {
 export interface NewGoalInput {
   type: GoalType;
   title: string;
-  /** music: 区間一覧 */
-  sections?: string[];
+  /** music: 区間一覧(P2: 空配列 = 白紙。未指定ならテンプレートを適用) */
+  sections?: Section[];
   /** music: 目標テンポ */
   targetTempo?: number;
   /** exam: 試験日など */
@@ -86,15 +94,21 @@ export function createGoal(input: NewGoalInput): Goal {
     logs: [] as LogEntry[],
   };
   if (input.type === "music") {
-    const sections =
-      input.sections && input.sections.length > 0 ? input.sections : ["A", "B"];
+    const sections = input.sections ?? buildSections(SECTION_TEMPLATE);
     const tempo = input.targetTempo ?? 120;
+    const stages = musicStages(tempo);
     return {
       ...base,
       type: "music",
       sections,
       targetTempo: tempo,
-      milestones: input.milestones ?? buildMusicMilestones(sections, tempo),
+      stages,
+      milestones:
+        input.milestones ??
+        buildMusicMilestones(
+          sections.map((s) => s.name),
+          stages,
+        ),
     };
   }
   if (input.type === "exam") {

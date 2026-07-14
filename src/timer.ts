@@ -16,6 +16,8 @@ export interface TimerConfig {
   overrun: boolean;
   /** 紐付ける目標のID(任意) */
   goalId?: string;
+  /** 紐付ける練習区間名(music用・任意。P4) */
+  section?: string;
 }
 
 /** 実行中のセッション。localStorage にも保存し、復帰・再起動時に現在時刻から補正する */

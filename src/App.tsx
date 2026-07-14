@@ -159,7 +159,8 @@ export default function App() {
 
   return (
     <div className="mx-auto min-h-screen max-w-md px-4 pb-28 pt-6">
-      <div className={tab === "goals" ? "" : "hidden"}>{goalsContent}</div>
+      {/* T6d: タイマー画面表示中は他タブのコンポーネントをアンマウントして描画コストを下げる */}
+      {tab === "goals" && <div>{goalsContent}</div>}
       {/* タイマーはタブを離れても動き続けるよう、非表示時もマウントしたままにする */}
       <div className={tab === "timer" ? "" : "hidden"}>
         <TimerScreen
@@ -193,7 +194,8 @@ export default function App() {
           >
             ⏱ タイマー
             {timerActive && (
-              <span className="ml-1.5 inline-block h-2 w-2 animate-pulse rounded-full bg-[#199e70] align-middle" />
+              /* T6d: 省電力のためアニメーションなしの静的ドット */
+              <span className="ml-1.5 inline-block h-2 w-2 rounded-full bg-[#199e70] align-middle" />
             )}
           </button>
         </div>

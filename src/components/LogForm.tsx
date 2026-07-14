@@ -14,20 +14,33 @@ const INPUT_CLASS =
 export default function LogForm({ goal, onAdd }: Props) {
   const isMusic = goal.type === "music";
   const [date, setDate] = useState(todayStr());
-  const [section, setSection] = useState(goal.sections?.[0] ?? "");
+  // P4: 区間は操作者が定義した一覧から複数選択(未選択 = 全体練習)
+  const [selSections, setSelSections] = useState<string[]>([]);
   const [tempo, setTempo] = useState("");
   const [note, setNote] = useState("");
+
+  const sectionNames = [...(goal.sections ?? [])]
+    .sort((a, b) => a.order - b.order)
+    .map((s) => s.name);
+
+  function toggleSection(name: string) {
+    setSelSections((cur) =>
+      cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name],
+    );
+  }
 
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!date) return;
+    // 表示順に整えて保存する
+    const ordered = sectionNames.filter((n) => selSections.includes(n));
     const log: LogEntry = {
       id: uid(),
       date,
       note: note.trim(),
       ...(isMusic
         ? {
-            section: section || undefined,
+            sections: ordered.length > 0 ? ordered : undefined,
             tempo: tempo !== "" ? Number(tempo) : undefined,
           }
         : {}),
@@ -41,35 +54,41 @@ export default function LogForm({ goal, onAdd }: Props) {
   return (
     <form onSubmit={submit} className="space-y-2 rounded-xl bg-slate-800 p-4">
       <h3 className="text-sm font-medium text-slate-300">今日の記録</h3>
-      <div className="flex gap-2">
-        <label className="flex-1 text-xs text-slate-400">
-          日付
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className={`${INPUT_CLASS} mt-1`}
-            required
-          />
-        </label>
-        {isMusic && (
-          <label className="flex-1 text-xs text-slate-400">
-            練習区間
-            <select
-              value={section}
-              onChange={(e) => setSection(e.target.value)}
-              className={`${INPUT_CLASS} mt-1`}
-            >
-              {(goal.sections ?? []).map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-              <option value="全体">全体</option>
-            </select>
-          </label>
-        )}
-      </div>
+      <label className="block text-xs text-slate-400">
+        日付
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className={`${INPUT_CLASS} mt-1`}
+          required
+        />
+      </label>
+      {isMusic && sectionNames.length > 0 && (
+        <div className="text-xs text-slate-400">
+          練習区間(タップで複数選択・未選択 = 全体)
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {sectionNames.map((name) => {
+              const selected = selSections.includes(name);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() => toggleSection(name)}
+                  aria-pressed={selected}
+                  className={`rounded-lg border px-2.5 py-1.5 text-sm ${
+                    selected
+                      ? "border-[#3987e5] bg-[#3987e5]/15 text-white"
+                      : "border-slate-700 text-slate-400"
+                  }`}
+                >
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {isMusic && (
         <label className="block text-xs text-slate-400">
           達成テンポ(♩)

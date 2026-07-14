@@ -1,5 +1,6 @@
 // タイマー画面: ポモドーロ / シンプルタイマーの設定・実行・履歴
 // T5: 経過時間はタイムスタンプ差分で計算し、復帰時に自動補正する(ロジックは ../timer.ts)
+// T6: 実行中は省電力運用 — Wake Lock で自動ロック防止、黒背景の暗転表示、1秒1回の描画更新
 import { useEffect, useState } from "react";
 import type { Goal, TimerLog, TimerMode } from "../types";
 import {
@@ -15,7 +16,13 @@ import {
   type TimerSession,
 } from "../timer";
 import { loadTimerSession, saveTimerSession } from "../storage";
-import { notify, unlockAudio } from "../alerts";
+import { notify, unlockAudio, type BeepKind } from "../alerts";
+import {
+  acquireWakeLock,
+  consumeWakeLockNotice,
+  releaseWakeLock,
+  wakeLockSupported,
+} from "../wakelock";
 import { uid } from "../util";
 import ProgressBar from "./ProgressBar";
 
@@ -42,9 +49,36 @@ const MODE_LABEL: Record<TimerMode, string> = {
   simple: "⏱ シンプル",
 };
 
+/** T6e: 通知時の画面全体の色変化(黒 → 明色) */
+const FLASH_COLOR: Record<BeepKind, string> = {
+  "work-end": "#199e70", // 作業終了 → 休憩(緑)
+  "break-end": "#3987e5", // 休憩終了 → 作業(青)
+  finish: "#f8fafc", // 完走(明るい白)
+};
+
 function clampInt(v: number, min: number, max: number): number {
   if (!Number.isFinite(v)) return min;
   return Math.min(max, Math.max(min, Math.round(v)));
+}
+
+/** セッションから表示用の値をまとめて導出する(通常表示・暗転表示で共用) */
+function sessionView(session: TimerSession, now: number) {
+  const cfg = session.config;
+  const dur = phaseDurationMs(session);
+  const elapsed = phaseElapsedMs(session, now);
+  const paused = session.phaseStartedEpoch === null;
+  const isBreak = session.phase === "break";
+  const over = cfg.mode === "simple" && cfg.overrun && elapsed >= dur;
+  const timeText = over
+    ? `+${fmtClock(Math.max(0, Math.floor((elapsed - dur) / 1000)))}`
+    : fmtClock(Math.max(0, Math.ceil((dur - elapsed) / 1000)));
+  const statusText =
+    cfg.mode === "pomodoro"
+      ? `${isBreak ? "休憩中" : "作業中"} セット${session.set}/${cfg.sets}`
+      : over
+        ? "超過中"
+        : "計測中";
+  return { cfg, dur, elapsed, paused, isBreak, over, timeText, statusText };
 }
 
 export default function TimerScreen({
@@ -61,6 +95,7 @@ export default function TimerScreen({
   const [sets, setSets] = useState(4);
   const [overrun, setOverrun] = useState(true); // シンプル: true=超過継続型
   const [goalId, setGoalId] = useState("");
+  const [sectionName, setSectionName] = useState(""); // P4: 紐付ける区間(任意)
 
   // ---- 実行状態(localStorage から復元し、現在時刻基準で補正する) ----
   const [session, setSession] = useState<TimerSession | null>(() =>
@@ -69,20 +104,40 @@ export default function TimerScreen({
   const [pending, setPending] = useState<PendingResult | null>(null);
   const [note, setNote] = useState("");
   const [now, setNow] = useState(() => Date.now());
-  const [flash, setFlash] = useState(false); // フェーズ切替時の視覚変化(T4)
+
+  // ---- 省電力表示(T6b/c) ----
+  const [viewMode, setViewMode] = useState<"dim" | "normal">("dim");
+  const [lastTouch, setLastTouch] = useState(0);
+  const [wakeNotice, setWakeNotice] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null); // 通知時の全画面色変化
 
   useEffect(() => {
     onActiveChange(session !== null);
   }, [session, onActiveChange]);
 
-  // 表示更新用の時計。バックグラウンドからの復帰時(visibilitychange / focus)は即時更新して補正する
+  // T6a: 実行中は Wake Lock を保持する。ページ非表示で自動解放されるため復帰時に取り直す
+  const lockDesired = session !== null && pending === null;
+  useEffect(() => {
+    if (!lockDesired) return;
+    const request = () => {
+      if (document.visibilityState === "visible") void acquireWakeLock();
+    };
+    request();
+    document.addEventListener("visibilitychange", request);
+    return () => {
+      document.removeEventListener("visibilitychange", request);
+      releaseWakeLock(); // 停止・完了時に必ず解放する
+    };
+  }, [lockDesired]);
+
+  // 表示更新用の時計(T6d: 更新は1秒1回)。復帰時は即時更新して残り時間を補正する
   useEffect(() => {
     const sync = () => setNow(Date.now());
     document.addEventListener("visibilitychange", sync);
     window.addEventListener("focus", sync);
     let id: number | undefined;
     if (session !== null && session.phaseStartedEpoch !== null && !pending) {
-      id = window.setInterval(sync, 250);
+      id = window.setInterval(sync, 1000);
     }
     return () => {
       document.removeEventListener("visibilitychange", sync);
@@ -97,19 +152,31 @@ export default function TimerScreen({
     const r = advance(session, now);
     if (r.events.length > 0) {
       // 複数フェーズをまたいで復帰した場合も通知は直近の1回だけ
-      notify(r.events[r.events.length - 1]);
-      setFlash(true);
-      window.setTimeout(() => setFlash(false), 1200);
+      notifyAndFlash(r.events[r.events.length - 1]);
     }
     if (r.session !== session) {
       setSession(r.session);
       saveTimerSession(r.session);
     }
     if (r.finished) {
-      notify("finish");
+      notifyAndFlash("finish");
       openResult(r.session, now, true);
     }
   }, [now, session, pending]);
+
+  // T6c: 通常表示は10秒間無操作で自動的に暗転へ戻る
+  useEffect(() => {
+    if (!session || pending || viewMode !== "normal") return;
+    const id = window.setTimeout(() => setViewMode("dim"), 10_000);
+    return () => window.clearTimeout(id);
+  }, [session, pending, viewMode, lastTouch]);
+
+  /** T6e: ビープ音 + バイブレーション + 画面全体の色変化 */
+  function notifyAndFlash(kind: BeepKind) {
+    notify(kind);
+    setFlash(FLASH_COLOR[kind]);
+    window.setTimeout(() => setFlash(null), 1200);
+  }
 
   /** 計測を止めた状態のセッションを返す(経過時間を積算に固定する) */
   function freeze(s: TimerSession, at: number): TimerSession {
@@ -142,6 +209,7 @@ export default function TimerScreen({
         : undefined;
     setSession(frozen);
     saveTimerSession(frozen);
+    setViewMode("normal");
     setPending({
       completed,
       actualSeconds: Math.round(actualMs / 1000),
@@ -162,6 +230,7 @@ export default function TimerScreen({
       sets,
       overrun,
       goalId: goalId || undefined,
+      section: goalId && sectionName ? sectionName : undefined,
     };
     const s: TimerSession = {
       config,
@@ -177,6 +246,14 @@ export default function TimerScreen({
     setSession(s);
     saveTimerSession(s);
     setNow(Date.now());
+    // T6a: 非対応環境では1回だけ案内を出す(見せるため通常表示から開始)
+    if (!wakeLockSupported() && consumeWakeLockNotice()) {
+      setWakeNotice(true);
+      setViewMode("normal");
+      setLastTouch(Date.now());
+    } else {
+      setViewMode("dim"); // T6b: 開始したら暗転表示
+    }
   }
 
   function handlePauseResume() {
@@ -218,6 +295,7 @@ export default function TimerScreen({
         completed: pending.completed,
         note: note.trim(),
         goalId: cfg.goalId,
+        section: cfg.section,
         ...(cfg.mode === "pomodoro"
           ? {
               workMinutes: cfg.workMinutes,
@@ -232,23 +310,41 @@ export default function TimerScreen({
     setNote("");
     setSession(null);
     saveTimerSession(null);
+    setWakeNotice(false);
   }
 
   const wClamped = clampInt(workMinutes, 5, 120);
   const pomodoroTotalSec = (wClamped * sets + breakMinutes * (sets - 1)) * 60;
 
+  // P4: 紐付け先が区間を持つ music 目標なら、区間の選択肢を出す
+  const linkedGoal = goals.find((g) => g.id === goalId);
+  const linkedSections =
+    linkedGoal?.type === "music"
+      ? [...(linkedGoal.sections ?? [])].sort((a, b) => a.order - b.order)
+      : [];
+
+  const view = session ? sessionView(session, now) : null;
+
   return (
     <div className="space-y-4">
       <h1 className="mb-5 text-xl font-bold">⏱ タイマー</h1>
 
-      {session ? (
-        <RunningCard
-          session={session}
-          now={now}
-          flash={flash}
-          onPauseResume={handlePauseResume}
-          onStop={handleStop}
-        />
+      {session && view ? (
+        /* 通常表示(T6c: タップで暗転と切替。操作ボタンはこちらにのみ置く) */
+        <div onClick={() => setLastTouch(Date.now())}>
+          {wakeNotice && (
+            <p className="mb-3 rounded-lg border border-amber-700 bg-amber-950 p-3 text-xs leading-relaxed text-amber-300">
+              この環境では画面ロックの自動防止(Wake Lock)が使えません。端末の設定で自動ロックをオフにしてください。
+            </p>
+          )}
+          <RunningCard
+            session={session}
+            now={now}
+            onPauseResume={handlePauseResume}
+            onStop={handleStop}
+            onDim={() => setViewMode("dim")}
+          />
+        </div>
       ) : (
         <section className="space-y-4 rounded-2xl bg-slate-800 p-4">
           {/* モード選択 */}
@@ -386,7 +482,10 @@ export default function TimerScreen({
               目標に紐付け(任意)
               <select
                 value={goalId}
-                onChange={(e) => setGoalId(e.target.value)}
+                onChange={(e) => {
+                  setGoalId(e.target.value);
+                  setSectionName("");
+                }}
                 className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-2 py-2 text-sm"
               >
                 <option value="">紐付けなし</option>
@@ -397,6 +496,24 @@ export default function TimerScreen({
                 ))}
               </select>
             </label>
+            {/* P4: 区間の選択(music目標のみ・任意) */}
+            {linkedSections.length > 0 && (
+              <label className="mt-2 block text-sm text-slate-300">
+                練習区間(任意)
+                <select
+                  value={sectionName}
+                  onChange={(e) => setSectionName(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-2 py-2 text-sm"
+                >
+                  <option value="">指定なし</option>
+                  {linkedSections.map((s) => (
+                    <option key={s.id} value={s.name}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
 
           <button
@@ -411,6 +528,41 @@ export default function TimerScreen({
 
       {!session && <TimerHistory logs={logs} goals={goals} onDelete={onDeleteLog} />}
 
+      {/* T6b/c: 暗転表示(黒背景+暗めのグレーの数字のみ。タップで通常表示へ) */}
+      {session && view && !pending && viewMode === "dim" && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4"
+          style={{ backgroundColor: "#000000" }}
+          onClick={() => {
+            unlockAudio();
+            setViewMode("normal");
+            setLastTouch(Date.now());
+          }}
+        >
+          <p className="text-sm" style={{ color: "#4b5563" }}>
+            {view.statusText}
+            {view.paused && "・一時停止中"}
+          </p>
+          <p
+            className="font-mono text-7xl font-bold tabular-nums"
+            style={{ color: "#6b7280" }}
+          >
+            {view.timeText}
+          </p>
+          <p className="text-xs" style={{ color: "#374151" }}>
+            タップで操作を表示
+          </p>
+        </div>
+      )}
+
+      {/* T6e: 通知時の全画面色変化(黒 → 明色) */}
+      {flash && (
+        <div
+          className="pointer-events-none fixed inset-0 z-[60]"
+          style={{ backgroundColor: flash }}
+        />
+      )}
+
       {pending && (
         <ResultDialog
           pending={pending}
@@ -424,41 +576,30 @@ export default function TimerScreen({
   );
 }
 
-// ---- 実行中の表示(残り時間・フェーズ・操作ボタン) ----
+// ---- 通常表示(操作ボタンあり。10秒無操作で暗転へ戻る) ----
 interface RunningProps {
   session: TimerSession;
   now: number;
-  flash: boolean;
   onPauseResume: () => void;
   onStop: () => void;
+  onDim: () => void;
 }
 
-function RunningCard({ session, now, flash, onPauseResume, onStop }: RunningProps) {
-  const cfg = session.config;
-  const dur = phaseDurationMs(session);
-  const elapsed = phaseElapsedMs(session, now);
-  const paused = session.phaseStartedEpoch === null;
-  const isBreak = session.phase === "break";
-  const over = cfg.mode === "simple" && cfg.overrun && elapsed >= dur;
-  const remainSec = Math.max(0, Math.ceil((dur - elapsed) / 1000));
-  const overSec = Math.max(0, Math.floor((elapsed - dur) / 1000));
-
+function RunningCard({ session, now, onPauseResume, onStop, onDim }: RunningProps) {
+  const v = sessionView(session, now);
+  const cfg = v.cfg;
+  const phaseColor = v.isBreak ? "#199e70" : v.over ? "#f59e0b" : "#3987e5";
   const phaseLabel =
     cfg.mode === "pomodoro"
-      ? isBreak
+      ? v.isBreak
         ? "☕ 休憩中"
         : "🔥 作業中"
-      : over
+      : v.over
         ? "⏰ 超過中"
         : "⏱ 計測中";
-  const phaseColor = isBreak ? "#199e70" : over ? "#f59e0b" : "#3987e5";
 
   return (
-    <section
-      className="rounded-2xl bg-slate-800 p-6 text-center"
-      // フェーズ切替時の視覚変化(リング点灯)
-      style={flash ? { boxShadow: `0 0 0 4px ${phaseColor}` } : undefined}
-    >
+    <section className="rounded-2xl bg-slate-800 p-6 text-center">
       <p className="text-lg font-bold" style={{ color: phaseColor }}>
         {phaseLabel}
       </p>
@@ -469,16 +610,16 @@ function RunningCard({ session, now, flash, onPauseResume, onStop }: RunningProp
       )}
       <p
         className={`my-4 font-mono text-6xl font-bold tabular-nums ${
-          paused ? "text-slate-500" : ""
+          v.paused ? "text-slate-500" : ""
         }`}
-        style={paused ? undefined : { color: over ? "#f59e0b" : "#f1f5f9" }}
+        style={v.paused ? undefined : { color: v.over ? "#f59e0b" : "#f1f5f9" }}
       >
-        {over ? `+${fmtClock(overSec)}` : fmtClock(remainSec)}
+        {v.timeText}
       </p>
-      <ProgressBar percent={Math.min(100, (elapsed / dur) * 100)} />
+      <ProgressBar percent={Math.min(100, (v.elapsed / v.dur) * 100)} />
       <p className="mt-2 text-xs text-slate-400">
         {cfg.mode === "pomodoro"
-          ? isBreak
+          ? v.isBreak
             ? `この後: セット${session.set + 1}の作業 ${cfg.workMinutes}分`
             : session.set >= cfg.sets
               ? "この後: 終了"
@@ -487,7 +628,7 @@ function RunningCard({ session, now, flash, onPauseResume, onStop }: RunningProp
             ? "設定時間の後も停止するまで計測を続けます"
             : "設定時間で自動的に終了します"}
       </p>
-      {paused && (
+      {v.paused && (
         <p className="mt-2 text-sm font-semibold text-amber-400">一時停止中</p>
       )}
       <div className="mt-5 flex gap-2">
@@ -495,7 +636,7 @@ function RunningCard({ session, now, flash, onPauseResume, onStop }: RunningProp
           onClick={onPauseResume}
           className="flex-1 rounded-lg border border-slate-600 py-3 text-sm font-semibold text-slate-200 active:bg-slate-700"
         >
-          {paused ? "▶ 再開" : "⏸ 一時停止"}
+          {v.paused ? "▶ 再開" : "⏸ 一時停止"}
         </button>
         <button
           onClick={onStop}
@@ -504,6 +645,12 @@ function RunningCard({ session, now, flash, onPauseResume, onStop }: RunningProp
           ⏹ 停止
         </button>
       </div>
+      <button
+        onClick={onDim}
+        className="mt-2 w-full rounded-lg border border-slate-700 py-2 text-xs text-slate-400 active:bg-slate-700"
+      >
+        🌙 暗転表示に戻す(10秒無操作でも自動で戻ります)
+      </button>
     </section>
   );
 }
@@ -544,7 +691,10 @@ function ResultDialog({ pending, note, onNote, goals, onClose }: DialogProps) {
             </p>
           )}
           {goal && (
-            <p className="mt-1 text-xs text-slate-400">🎯 {goal.title} に紐付け</p>
+            <p className="mt-1 text-xs text-slate-400">
+              🎯 {goal.title}
+              {cfg.section && `(${cfg.section})`} に紐付け
+            </p>
           )}
         </div>
         <label className="block text-sm text-slate-300">
@@ -640,6 +790,7 @@ function TimerHistory({ logs, goals, onDelete }: HistoryProps) {
                     {goal && (
                       <span className="mr-1 rounded bg-slate-700 px-1 text-slate-300">
                         🎯 {goal.title}
+                        {t.section && `(${t.section})`}
                       </span>
                     )}
                     {t.note}

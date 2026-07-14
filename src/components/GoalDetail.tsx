@@ -1,13 +1,14 @@
 // 目標詳細画面: 進捗・グラフ・ログ入力・マイルストーン一覧・ログ履歴
 import { useState } from "react";
-import type { Goal, LogEntry, Milestone } from "../types";
-import { goalProgress, nowStr } from "../util";
+import type { Goal, LogEntry, Milestone, Section } from "../types";
+import { goalProgress, nowStr, uid } from "../util";
 import { fmtDuration } from "../timer";
 import { TYPE_LABEL } from "./GoalCard";
 import LogForm from "./LogForm";
 import MilestoneEditor, { targetText } from "./MilestoneEditor";
 import ProgressBar from "./ProgressBar";
 import ProgressChart from "./ProgressChart";
+import SectionEditor from "./SectionEditor";
 
 interface Props {
   goal: Goal;
@@ -28,6 +29,71 @@ export default function GoalDetail({
   const doneCount = goal.milestones.filter((m) => m.done).length;
   // マイルストーン編集モード(M1: 追加・編集・削除・並べ替え)
   const [msEditing, setMsEditing] = useState(false);
+  // 練習区間編集モード(P1)
+  const [secEditing, setSecEditing] = useState(false);
+  // テンポ段階の編集用テキスト(P3。確定はフォーカスアウト時)
+  const [stagesText, setStagesText] = useState(() =>
+    (goal.stages ?? []).join(", "),
+  );
+
+  /**
+   * 区間一覧の変更を反映する(P1/P3)。
+   * - リネームはマイルストーン・記録の区間名にも波及させる
+   * - 新規追加した区間にはテンポ段階のマイルストーンを自動生成する
+   * - 削除した区間のマイルストーン・記録はそのまま残す(非破壊)
+   */
+  function updateSections(newSections: Section[]) {
+    onUpdate((g) => {
+      const old = g.sections ?? [];
+      const renames = new Map<string, string>();
+      for (const ns of newSections) {
+        const prev = old.find((s) => s.id === ns.id);
+        if (prev && prev.name !== ns.name) renames.set(prev.name, ns.name);
+      }
+      const rename = (name: string) => renames.get(name) ?? name;
+      let milestones = g.milestones;
+      let logs = g.logs;
+      if (renames.size > 0) {
+        milestones = milestones.map((m) =>
+          m.section !== undefined ? { ...m, section: rename(m.section) } : m,
+        );
+        logs = logs.map((l) => ({
+          ...l,
+          ...(l.section !== undefined ? { section: rename(l.section) } : {}),
+          ...(l.sections !== undefined
+            ? { sections: l.sections.map(rename) }
+            : {}),
+        }));
+      }
+      const added = newSections.filter(
+        (ns) => !old.some((s) => s.id === ns.id),
+      );
+      for (const sec of added) {
+        const base = milestones.length;
+        milestones = [
+          ...milestones,
+          ...(g.stages ?? []).map((title, i) => ({
+            id: uid(),
+            title,
+            section: sec.name,
+            done: false,
+            order: base + i,
+          })),
+        ];
+      }
+      return { ...g, sections: newSections, milestones, logs };
+    });
+  }
+
+  /** テンポ段階(カンマ区切り)を確定する。以後に追加する区間へ適用される */
+  function commitStages() {
+    const stages = stagesText
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setStagesText(stages.join(", "));
+    onUpdate((g) => ({ ...g, stages }));
+  }
 
   function toggleMilestone(id: string) {
     onUpdate((g) => ({
@@ -113,6 +179,65 @@ export default function GoalDetail({
       <ProgressChart goal={goal} />
 
       <LogForm goal={goal} onAdd={addLog} />
+
+      {/* P1: 練習区間の自由編集(musicのみ) */}
+      {goal.type === "music" && (
+        <section className="rounded-xl bg-slate-800 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-medium text-slate-300">練習区間</h3>
+            <button
+              onClick={() => setSecEditing((v) => !v)}
+              className={`rounded-lg border px-3 py-1 text-xs font-semibold ${
+                secEditing
+                  ? "border-[#3987e5] text-[#3987e5]"
+                  : "border-slate-600 text-slate-300"
+              } active:bg-slate-700`}
+            >
+              {secEditing ? "編集を終了" : "✎ 編集"}
+            </button>
+          </div>
+          {secEditing ? (
+            <>
+              <SectionEditor
+                sections={goal.sections ?? []}
+                onChange={updateSections}
+              />
+              <label className="mt-3 block text-xs text-slate-400">
+                テンポ段階(カンマ区切り。新しく追加する区間に適用)
+                <input
+                  type="text"
+                  value={stagesText}
+                  onChange={(e) => setStagesText(e.target.value)}
+                  onBlur={commitStages}
+                  placeholder="例: 譜読み完了, ♩=60で通し, ♩=100で通し"
+                  className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500"
+                />
+              </label>
+            </>
+          ) : (goal.sections ?? []).length === 0 ? (
+            <p className="text-sm text-slate-400">
+              区間がありません。「✎ 編集」から追加できます。
+            </p>
+          ) : (
+            <ul className="flex flex-wrap gap-1.5">
+              {[...(goal.sections ?? [])]
+                .sort((a, b) => a.order - b.order)
+                .map((s) => (
+                  <li
+                    key={s.id}
+                    className="rounded-lg bg-slate-700 px-2 py-1 text-xs text-slate-200"
+                    title={s.note}
+                  >
+                    {s.name}
+                    {s.bars && (
+                      <span className="ml-1 text-slate-400">({s.bars})</span>
+                    )}
+                  </li>
+                ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <section className="rounded-xl bg-slate-800 p-4">
         <div className="mb-2 flex items-center justify-between">
@@ -204,10 +329,15 @@ export default function GoalDetail({
               <li key={log.id} className="flex items-start gap-2 py-2 text-sm">
                 <span className="shrink-0 text-slate-400">{log.date}</span>
                 <span className="min-w-0 flex-1">
-                  {log.section && (
-                    <span className="mr-1 rounded bg-slate-700 px-1 text-xs text-slate-300">
-                      {log.section}
-                    </span>
+                  {(log.sections ?? (log.section ? [log.section] : [])).map(
+                    (s) => (
+                      <span
+                        key={s}
+                        className="mr-1 rounded bg-slate-700 px-1 text-xs text-slate-300"
+                      >
+                        {s}
+                      </span>
+                    ),
                   )}
                   {log.tempo !== undefined && (
                     <span className="mr-1 text-slate-200">♩={log.tempo}</span>

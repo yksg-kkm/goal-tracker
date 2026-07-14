@@ -1,16 +1,19 @@
 // 目標追加画面: type 選択でテンプレートを「初期案」として提案する(M2)
 // マイルストーンは「このまま使う / 編集して使う / 白紙から作る」から選べる
 import { useState, type FormEvent } from "react";
-import type { GoalType, Milestone } from "../types";
+import type { GoalType, Milestone, Section } from "../types";
 import {
   buildMusicMilestones,
+  buildSections,
   buildSimpleMilestones,
   EXAM_TEMPLATE,
   HABIT_TEMPLATE,
   musicStages,
+  SECTION_TEMPLATE,
   type NewGoalInput,
 } from "../templates";
 import MilestoneEditor from "./MilestoneEditor";
+import SectionEditor from "./SectionEditor";
 
 interface Props {
   onCreate: (input: NewGoalInput) => void;
@@ -38,6 +41,25 @@ const MS_CHOICES: { value: MsChoice; label: string; desc: string }[] = [
   },
 ];
 
+/** P2: 練習区間テンプレート(A/A'/B/A''/コーダ)の使い方 */
+const SEC_CHOICES: { value: MsChoice; label: string; desc: string }[] = [
+  {
+    value: "template",
+    label: "このまま使う",
+    desc: `テンプレート(${SECTION_TEMPLATE.join(" / ")})を適用`,
+  },
+  {
+    value: "edit",
+    label: "編集して使う",
+    desc: "テンプレートを下書きにして、区間を今ここで編集する",
+  },
+  {
+    value: "blank",
+    label: "白紙から作る",
+    desc: "区間なしで作成し、自由に追加する(1小節単位などもOK)",
+  },
+];
+
 const TYPE_OPTIONS: { value: GoalType; label: string; desc: string }[] = [
   {
     value: "music",
@@ -62,30 +84,35 @@ const INPUT_CLASS =
 export default function GoalForm({ onCreate, onBack }: Props) {
   const [type, setType] = useState<GoalType>("music");
   const [title, setTitle] = useState("");
-  const [sectionsText, setSectionsText] = useState("A,A',B,A'',コーダ");
   const [targetTempo, setTargetTempo] = useState("120");
   const [targetDate, setTargetDate] = useState("");
   const [msChoice, setMsChoice] = useState<MsChoice>("template");
   // 「編集して使う / 白紙から作る」の下書きマイルストーン
   const [drafts, setDrafts] = useState<Milestone[]>([]);
+  // P2: 練習区間の初期化方法と下書き(musicのみ)
+  const [secChoice, setSecChoice] = useState<MsChoice>("template");
+  const [secDrafts, setSecDrafts] = useState<Section[]>([]);
 
-  function parseSections(): string[] {
-    return sectionsText
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  /** 現在の選択に基づく区間一覧(musicのみ意味を持つ) */
+  function effectiveSections(): Section[] {
+    return secChoice === "template" ? buildSections(SECTION_TEMPLATE) : secDrafts;
   }
 
   /** 現在の入力値からテンプレートのマイルストーンを生成する */
   function buildFromTemplate(t: GoalType): Milestone[] {
     if (t === "music") {
-      const sections = parseSections();
       return buildMusicMilestones(
-        sections.length > 0 ? sections : ["A", "B"],
-        Number(targetTempo) || 120,
+        effectiveSections().map((s) => s.name),
+        musicStages(Number(targetTempo) || 120),
       );
     }
     return buildSimpleMilestones(t === "exam" ? EXAM_TEMPLATE : HABIT_TEMPLATE);
+  }
+
+  function changeSecChoice(c: MsChoice) {
+    setSecChoice(c);
+    if (c === "edit") setSecDrafts(buildSections(SECTION_TEMPLATE));
+    if (c === "blank") setSecDrafts([]);
   }
 
   function changeType(t: GoalType) {
@@ -114,7 +141,7 @@ export default function GoalForm({ onCreate, onBack }: Props) {
     onCreate({
       type,
       title: title.trim(),
-      sections: parseSections(),
+      sections: type === "music" ? effectiveSections() : undefined,
       targetTempo: Number(targetTempo) || 120,
       targetDate: targetDate || undefined,
       // M2: 「このまま使う」以外は下書き(空配列含む)をそのまま採用する
@@ -175,16 +202,6 @@ export default function GoalForm({ onCreate, onBack }: Props) {
         {type === "music" && (
           <>
             <label className="block text-xs text-slate-400">
-              練習区間(カンマ区切り)
-              <input
-                type="text"
-                value={sectionsText}
-                onChange={(e) => setSectionsText(e.target.value)}
-                placeholder="例: A,A',B,A'',コーダ"
-                className={`${INPUT_CLASS} mt-1`}
-              />
-            </label>
-            <label className="block text-xs text-slate-400">
               目標テンポ(♩)
               <input
                 type="number"
@@ -196,6 +213,54 @@ export default function GoalForm({ onCreate, onBack }: Props) {
                 className={`${INPUT_CLASS} mt-1`}
               />
             </label>
+
+            {/* P2: 練習区間テンプレートの使い方を3択から選ぶ */}
+            <fieldset>
+              <legend className="mb-2 text-xs text-slate-400">
+                練習区間の作り方
+              </legend>
+              <div className="space-y-1.5">
+                {SEC_CHOICES.map((c) => (
+                  <label
+                    key={c.value}
+                    className={`flex items-start gap-2 rounded-lg border p-2.5 text-sm ${
+                      secChoice === c.value
+                        ? "border-[#3987e5] bg-slate-800"
+                        : "border-slate-700 bg-slate-900"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="sec-choice"
+                      checked={secChoice === c.value}
+                      onChange={() => changeSecChoice(c.value)}
+                      className="mt-0.5 accent-[#3987e5]"
+                    />
+                    <span>
+                      <span className="font-semibold text-slate-200">
+                        {c.label}
+                      </span>
+                      <span className="block text-xs text-slate-400">
+                        {c.desc}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            {secChoice !== "template" && (
+              <div className="rounded-xl bg-slate-900 p-3">
+                <h3 className="mb-2 text-xs font-semibold text-slate-400">
+                  練習区間({secDrafts.length}件)
+                </h3>
+                <SectionEditor
+                  key={secChoice}
+                  sections={secDrafts}
+                  onChange={setSecDrafts}
+                />
+              </div>
+            )}
           </>
         )}
 
