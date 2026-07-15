@@ -132,7 +132,11 @@ export default function TimerScreen({
 
   // 表示更新用の時計(T6d: 更新は1秒1回)。復帰時は即時更新して残り時間を補正する
   useEffect(() => {
-    const sync = () => setNow(Date.now());
+    const sync = () => {
+      setNow(Date.now());
+      // T6e: 復帰時に音声を再ウォームし、次の通知を確実に鳴らせるようにする
+      if (session !== null && document.visibilityState === "visible") unlockAudio();
+    };
     document.addEventListener("visibilitychange", sync);
     window.addEventListener("focus", sync);
     let id: number | undefined;
@@ -171,11 +175,30 @@ export default function TimerScreen({
     return () => window.clearTimeout(id);
   }, [session, pending, viewMode, lastTouch]);
 
-  /** T6e: ビープ音 + バイブレーション + 画面全体の色変化 */
+  /**
+   * T6e: 終了通知。iOS では navigator.vibrate が非対応のため、
+   * 「画面全体を黒⇔明色で3回点滅 + ビープ」を主通知とする(バイブは対応環境の補助)。
+   */
   function notifyAndFlash(kind: BeepKind) {
     notify(kind);
-    setFlash(FLASH_COLOR[kind]);
-    window.setTimeout(() => setFlash(null), 1200);
+    const color = FLASH_COLOR[kind];
+    const on = 220; // 明色を出す時間(ms)
+    const off = 160; // 黒に戻す時間(ms)
+    const times = 3;
+    let count = 0;
+    const step = () => {
+      setFlash(color); // 明色
+      window.setTimeout(() => {
+        count += 1;
+        if (count < times) {
+          setFlash("#000000"); // 黒に戻して点滅を作る
+          window.setTimeout(step, off);
+        } else {
+          setFlash(null); // 最後は消灯
+        }
+      }, on);
+    };
+    step();
   }
 
   /** 計測を止めた状態のセッションを返す(経過時間を積算に固定する) */
@@ -331,7 +354,12 @@ export default function TimerScreen({
 
       {session && view ? (
         /* 通常表示(T6c: タップで暗転と切替。操作ボタンはこちらにのみ置く) */
-        <div onClick={() => setLastTouch(Date.now())}>
+        <div
+          onClick={() => {
+            unlockAudio(); // どのタップでも音声を再ウォームしておく(iOS対策)
+            setLastTouch(Date.now());
+          }}
+        >
           {wakeNotice && (
             <p className="mb-3 rounded-lg border border-amber-700 bg-amber-950 p-3 text-xs leading-relaxed text-amber-300">
               この環境では画面ロックの自動防止(Wake Lock)が使えません。端末の設定で自動ロックをオフにしてください。
@@ -523,6 +551,10 @@ export default function TimerScreen({
           >
             ▶ 開始
           </button>
+          {/* T6e: マナーモード/消音中は音が鳴らない旨を注記(iOSは画面点滅で通知) */}
+          <p className="text-center text-xs leading-relaxed text-slate-400">
+            🔇 マナーモード・消音中はビープ音が鳴りません。終了時は画面全体の点滅でお知らせします。
+          </p>
         </section>
       )}
 

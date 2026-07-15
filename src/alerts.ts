@@ -4,14 +4,36 @@
 
 let audioCtx: AudioContext | null = null;
 
+/** AudioContext コンストラクタを取得する(iOS 旧版の webkitAudioContext にも対応) */
+function getAudioCtor(): typeof AudioContext | undefined {
+  if (typeof AudioContext !== "undefined") return AudioContext;
+  return (window as unknown as { webkitAudioContext?: typeof AudioContext })
+    .webkitAudioContext;
+}
+
 /**
  * iOS対策: 音はユーザー操作(タップ)中に AudioContext を生成・再開しておかないと鳴らせない。
- * 開始・再開ボタンのハンドラ内で必ず呼ぶこと。
+ * 開始・再開・画面タップのハンドラ内で必ず呼ぶこと。単一インスタンスを使い回す。
+ * iOS Safari は resume() だけでは解錠されないことがあるため、無音の1サンプルを
+ * その場で再生してオーディオ経路を確実にアンロックする。
  */
 export function unlockAudio(): void {
   try {
-    audioCtx ??= new AudioContext();
-    if (audioCtx.state === "suspended") void audioCtx.resume();
+    if (audioCtx === null) {
+      const Ctor = getAudioCtor();
+      if (!Ctor) return; // Web Audio 非対応環境では無音のまま続行する
+      audioCtx = new Ctor();
+    }
+    // suspended / interrupted(iOS)いずれも再開対象。closed のみ除外する
+    if (audioCtx.state !== "running" && audioCtx.state !== "closed") {
+      void audioCtx.resume();
+    }
+    // 無音バッファを再生して iOS のオーディオをアンロックする
+    const buf = audioCtx.createBuffer(1, 1, 22050);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    src.start(0);
   } catch {
     // Web Audio 非対応環境では無音のまま続行する
   }
@@ -46,8 +68,19 @@ export function notify(kind: BeepKind): void {
 }
 
 function playBeep(kind: BeepKind): void {
-  if (!audioCtx || audioCtx.state !== "running") return; // unlockAudio 前は鳴らせない
-  for (const [freq, at] of TONES[kind]) tone(audioCtx, freq, at);
+  const ctx = audioCtx;
+  if (!ctx) return; // unlockAudio 前は鳴らせない
+  if (ctx.state === "closed") return; // 破棄済みなら何もしない
+  const emit = () => {
+    for (const [freq, at] of TONES[kind]) tone(ctx, freq, at);
+  };
+  // 再生直前に state を確認。suspended / interrupted(iOSのバックグラウンド復帰直後など)は
+  // resume() してから鳴らす
+  if (ctx.state !== "running") {
+    void ctx.resume().then(emit).catch(() => {});
+  } else {
+    emit();
+  }
 }
 
 /** 単音を1つ鳴らす(クリックノイズ防止のためゲインをなだらかに変化させる) */
